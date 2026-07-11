@@ -4,8 +4,8 @@ go 1.26
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/ikarolaborda/peikonpurekkusu-contracts/gen/go v1.0.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/peikonpurekkusu/contracts/gen/go v0.0.0
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/twmb/franz-go v1.21.5
@@ -31,5 +31,3 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260420184626-e10c466a9529 // indirect
 )
-
-replace github.com/peikonpurekkusu/contracts/gen/go => ../../contracts/gen/go

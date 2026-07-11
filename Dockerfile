@@ -1,13 +1,12 @@
 # syntax=docker/dockerfile:1.7
-# Build context: repo root (dockerfile: services/account-service/Dockerfile)
+# Build context: this service's own directory. Contracts arrive as a versioned Go
+# module from the public proxy, so nothing outside this repo is needed.
 
 FROM golang:1.26 AS build
 WORKDIR /src
 # -p=1 keeps peak compiler memory low enough for small Docker VMs
 ENV CGO_ENABLED=0 GOFLAGS=-p=1
-COPY contracts/gen/go ./contracts/gen/go
-COPY services/account-service ./services/account-service
-WORKDIR /src/services/account-service
+COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download && \

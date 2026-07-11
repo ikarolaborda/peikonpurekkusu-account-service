@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	accountv1 "github.com/peikonpurekkusu/contracts/gen/go/account/v1"
+	accountv1 "github.com/ikarolaborda/peikonpurekkusu-contracts/gen/go/account/v1"
 	"github.com/peikonpurekkusu/account-service/internal/ledger"
 )
 

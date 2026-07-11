@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
-	accountv1 "github.com/peikonpurekkusu/contracts/gen/go/account/v1"
+	accountv1 "github.com/ikarolaborda/peikonpurekkusu-contracts/gen/go/account/v1"
 	account "github.com/peikonpurekkusu/account-service"
 	"github.com/peikonpurekkusu/account-service/internal/consumer"
 	"github.com/peikonpurekkusu/account-service/internal/events"
