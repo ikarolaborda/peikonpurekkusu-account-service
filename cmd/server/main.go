@@ -108,7 +108,8 @@ func run(log *slog.Logger) error {
 	relay := outbox.NewRelay(pool, producer, registry, log)
 	go relay.Run(ctx)
 
-	cons, err := consumer.New(pool, facade, splitCSV(cfg.KafkaBootstrap), producer, log, cfg.WelcomeSeedMinor)
+	validator := events.NewValidator(cfg.SchemaRegistryURL)
+	cons, err := consumer.New(pool, facade, splitCSV(cfg.KafkaBootstrap), producer, validator, log, cfg.WelcomeSeedMinor)
 	if err != nil {
 		return fmt.Errorf("kafka consumer: %w", err)
 	}

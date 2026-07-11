@@ -33,15 +33,17 @@ const (
 )
 
 type Consumer struct {
-	pool     *pgxpool.Pool
-	facade   *ledger.Facade
-	client   *kgo.Client
-	producer *kgo.Client // for DLQ publishing
-	log      *slog.Logger
-	seedAmt  int64
+	pool      *pgxpool.Pool
+	facade    *ledger.Facade
+	client    *kgo.Client
+	producer  *kgo.Client // for DLQ publishing
+	validator *events.Validator
+	log       *slog.Logger
+	seedAmt   int64
 }
 
-func New(pool *pgxpool.Pool, facade *ledger.Facade, bootstrap []string, producer *kgo.Client, log *slog.Logger, seedAmt int64) (*Consumer, error) {
+func New(pool *pgxpool.Pool, facade *ledger.Facade, bootstrap []string, producer *kgo.Client,
+	validator *events.Validator, log *slog.Logger, seedAmt int64) (*Consumer, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(bootstrap...),
 		kgo.ConsumerGroup(group),
@@ -51,7 +53,7 @@ func New(pool *pgxpool.Pool, facade *ledger.Facade, bootstrap []string, producer
 	if err != nil {
 		return nil, err
 	}
-	return &Consumer{pool: pool, facade: facade, client: client, producer: producer, log: log, seedAmt: seedAmt}, nil
+	return &Consumer{pool: pool, facade: facade, client: client, producer: producer, validator: validator, log: log, seedAmt: seedAmt}, nil
 }
 
 func (c *Consumer) Close() { c.client.Close() }
@@ -108,6 +110,27 @@ func (c *Consumer) handleWithRetry(ctx context.Context, rec *kgo.Record) bool {
 }
 
 func (c *Consumer) handle(ctx context.Context, rec *kgo.Record) error {
+	// Validate against the exact schema the producer framed with, BEFORE any
+	// field is read. Registry outage blocks HERE: franz-go commits per batch,
+	// so returning "unsettled" would let the next successful batch commit past
+	// this record — blocking inside the handler is what holds the offset.
+	for {
+		verr := c.validator.Validate(ctx, rec.Value)
+		if verr == nil {
+			break
+		}
+		if errors.Is(verr, events.ErrRegistryUnavailable) {
+			c.log.Warn("schema registry unavailable — holding", "topic", rec.Topic, "offset", rec.Offset)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		return poison(verr)
+	}
+
 	env, err := events.Unframe(rec.Value)
 	if err != nil {
 		// Poison by construction — no retry will fix it.
