@@ -29,6 +29,7 @@ import (
 	account "github.com/peikonpurekkusu/account-service"
 	"github.com/peikonpurekkusu/account-service/internal/consumer"
 	"github.com/peikonpurekkusu/account-service/internal/events"
+	"github.com/peikonpurekkusu/account-service/internal/gatewayauth"
 	"github.com/peikonpurekkusu/account-service/internal/grpcapi"
 	"github.com/peikonpurekkusu/account-service/internal/httpapi"
 	"github.com/peikonpurekkusu/account-service/internal/ledger"
@@ -153,9 +154,13 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		return producer.Ping(pingCtx) == nil
 	}
+	verifier, err := gatewayauth.New(ctx, cfg.JWKSURL, log)
+	if err != nil {
+		return fmt.Errorf("gateway auth verifier: %w", err)
+	}
 	httpSrv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           httpapi.New(pool, cache, cfg.BalanceCacheTTL, kafkaOK, log).Handler(),
+		Handler:           verifier.Middleware(httpapi.New(pool, cache, cfg.BalanceCacheTTL, kafkaOK, log).Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

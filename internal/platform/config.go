@@ -21,6 +21,7 @@ type Config struct {
 
 	KafkaBootstrap    string
 	SchemaRegistryURL string
+	JWKSURL           string
 
 	HTTPPort int
 	GRPCPort int
@@ -44,6 +45,7 @@ func Load() (Config, error) {
 		RedisCachePassword: os.Getenv("REDIS_CACHE_PASSWORD"),
 		KafkaBootstrap:     getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:19092"),
 		SchemaRegistryURL:  getenv("SCHEMA_REGISTRY_URL", "http://apicurio-registry:8080/apis/ccompat/v7"),
+		JWKSURL:            getenv("GATEWAY_JWKS_URL", "http://user-service:8080/.well-known/jwks.json"),
 		HTTPPort:           getint("HTTP_PORT", 8080),
 		GRPCPort:           getint("GRPC_PORT", 9090),
 		HoldDefaultTTL:     getdur("HOLD_DEFAULT_TTL", 7*24*time.Hour),
