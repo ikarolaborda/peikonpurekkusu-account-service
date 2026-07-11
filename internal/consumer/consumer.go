@@ -10,6 +10,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -68,40 +69,53 @@ func (c *Consumer) Run(ctx context.Context) {
 			time.Sleep(time.Second)
 			continue
 		}
+		settled := true
 		fetches.EachRecord(func(rec *kgo.Record) {
-			c.handleWithRetry(ctx, rec)
+			if !c.handleWithRetry(ctx, rec) {
+				settled = false
+			}
 		})
+		// Only advance past records that are processed or durably dead-lettered.
+		// Handling is idempotent, so redelivering the batch is always safe.
+		if !settled {
+			c.log.Error("batch not settled — offsets left uncommitted for redelivery")
+			time.Sleep(time.Second)
+			continue
+		}
 		if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
 			c.log.Error("offset commit failed", "error", err)
 		}
 	}
 }
 
-func (c *Consumer) handleWithRetry(ctx context.Context, rec *kgo.Record) {
+// handleWithRetry reports whether the record is settled (processed, or durably
+// dead-lettered). False means the offset must not advance.
+func (c *Consumer) handleWithRetry(ctx context.Context, rec *kgo.Record) bool {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := c.handle(ctx, rec); err != nil {
-			lastErr = err
-			c.log.Warn("event handling failed", "topic", rec.Topic, "attempt", attempt, "error", err)
-			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
-			continue
+		err := c.handle(ctx, rec)
+		if err == nil {
+			return true
 		}
-		return
+		if poison := (*poisonError)(nil); errors.As(err, &poison) {
+			return c.deadLetter(ctx, rec, poison.cause)
+		}
+		lastErr = err
+		c.log.Warn("event handling failed", "topic", rec.Topic, "attempt", attempt, "error", err)
+		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 	}
-	c.deadLetter(ctx, rec, lastErr)
+	return c.deadLetter(ctx, rec, lastErr)
 }
 
 func (c *Consumer) handle(ctx context.Context, rec *kgo.Record) error {
 	env, err := events.Unframe(rec.Value)
 	if err != nil {
 		// Poison by construction — no retry will fix it.
-		c.deadLetter(ctx, rec, err)
-		return nil
+		return poison(err)
 	}
 	eventID, err := uuid.Parse(env.EventID)
 	if err != nil {
-		c.deadLetter(ctx, rec, fmt.Errorf("bad event_id: %w", err))
-		return nil
+		return poison(fmt.Errorf("bad event_id: %w", err))
 	}
 
 	return c.facade.InTx(ctx, func(tx pgx.Tx) error {
@@ -164,7 +178,9 @@ func (c *Consumer) onPaymentFailed(ctx context.Context, tx pgx.Tx, env events.En
 	return nil
 }
 
-func (c *Consumer) deadLetter(ctx context.Context, rec *kgo.Record, cause error) {
+// deadLetter reports whether the record reached the DLQ. A failed DLQ publish
+// must not settle the record — dropping it is the silent loss the DLQ prevents.
+func (c *Consumer) deadLetter(ctx context.Context, rec *kgo.Record, cause error) bool {
 	dlq := fmt.Sprintf("%s.%s.dlq", group, rec.Topic)
 	headers := append(rec.Headers,
 		kgo.RecordHeader{Key: "x-exception", Value: []byte(fmt.Sprint(cause))},
@@ -181,13 +197,20 @@ func (c *Consumer) deadLetter(ctx context.Context, rec *kgo.Record, cause error)
 		Headers: headers,
 	}).FirstErr()
 	if err != nil {
-		// Refusing to lose the message silently: without a DLQ write the
-		// offset still advances, so make the loss loud.
-		c.log.Error("DLQ publish FAILED — message dropped", "dlq", dlq, "cause", cause, "error", err)
-		return
+		c.log.Error("DLQ publish failed — offset held for redelivery", "dlq", dlq, "cause", cause, "error", err)
+		return false
 	}
 	c.log.Warn("message dead-lettered", "dlq", dlq, "cause", cause)
+	return true
 }
+
+// poisonError marks an event that can never succeed on redelivery — it goes
+// straight to the DLQ instead of burning the retry budget.
+type poisonError struct{ cause error }
+
+func (p *poisonError) Error() string { return p.cause.Error() }
+
+func poison(cause error) error { return &poisonError{cause: cause} }
 
 func str(v any) string {
 	s, _ := v.(string)
